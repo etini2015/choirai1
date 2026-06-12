@@ -1,119 +1,108 @@
 import os
-os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"  # Reduce logging noise
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"   # Mute standard TensorFlow CPU warnings
-
 import shutil
+import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from basic_pitch.inference import predict_and_save
-from music21 import converter
+import aubio
+from music21 import pitch, key, stream, note
 
 app = FastAPI(
-    title="Sol-fa Transcription API",
-    description="Converts raw audio streams directly into Tonic Sol-fa syllables"
+    title="Lightweight Sol-fa Transcription API",
+    description="TensorFlow-free monophonic audio transcription engine optimized for low-RAM servers"
 )
 
-# Enable CORS so your Lovable.dev web application can securely fetch data
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Replace with your Lovable domain URL in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Standard Sol-fa syllables mapped to numerical scale degrees
-SOLFA_MAP = {
-    1: "do",
-    2: "re",
-    3: "mi",
-    4: "fa",
-    5: "sol",
-    6: "la",
-    7: "ti"
-}
+SOLFA_MAP = {1: "do", 2: "re", 3: "mi", 4: "fa", 5: "sol", 6: "la", 7: "ti"}
 
 @app.get("/")
 def health_check():
-    return {"status": "healthy", "service": "Sol-fa Transcriber Engine"}
+    return {"status": "healthy", "service": "Lightweight Sol-fa Engine"}
 
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
-    # 1. FIXED: Convert filename safely to string to prevent tuple exceptions
     filename_str = str(file.filename)
     allowed_extensions = [".wav", ".mp3", ".ogg", ".flac", ".m4a"]
-    file_ext = os.path.splitext(filename_str)[1].lower()
+    file_ext = os.path.splitext(filename_str).lower()
     
     if file_ext not in allowed_extensions:
         raise HTTPException(
             status_code=400, 
-            detail=f"Unsupported file format. Please upload: {', '.join(allowed_extensions)}"
+            detail=f"Unsupported format. Please upload: {', '.join(allowed_extensions)}"
         )
 
-    # 2. Define temporary operational file paths
     temp_dir = "./temp_processing"
     os.makedirs(temp_dir, exist_ok=True)
-    
-    # Safe storage name construction
-    safe_filename = filename_str.replace("(", "").replace(")", "").replace(" ", "_")
-    input_audio_path = os.path.join(temp_dir, f"upload_{safe_filename}")
-    output_midi_dir = os.path.join(temp_dir, "midi_out")
-    os.makedirs(output_midi_dir, exist_ok=True)
+    input_audio_path = os.path.join(temp_dir, f"upload_{filename_str.replace(' ', '_')}")
     
     try:
-        # 3. Save incoming stream to local storage
         with open(input_audio_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
-        # 4. Transcribe audio straight to absolute MIDI using correct function name
-        predict_and_save(
-            audio_path_list=[input_audio_path],
-            output_directory=output_midi_dir,
-            save_midi=True,
-            sonify_midi=False,
-            save_model_outputs=False,
-            save_notes=False
-        )
+        # 1. Initialize Aubio's lightweight pitch tracker
+        samplerate = 44100
+        win_s = 4096   # window size
+        hop_s = 512    # hop size
         
-        # 5. SAFE LOOKUP: Locate the generated MIDI file
-        if not os.path.exists(output_midi_dir):
-            raise HTTPException(status_code=500, detail="Midi output directory was not created.")
+        src = aubio.source(input_audio_path, samplerate, hop_s)
+        samplerate = src.samplerate
+        
+        # Uses YinFFT algorithm - highly accurate for monophonic singing/vocal tracks
+        pitch_o = aubio.pitch("yinfft", win_s, hop_s, samplerate)
+        pitch_o.set_unit("midi")
+        pitch_o.set_tolerance(0.8)
+        
+        detected_pitches = []
+        
+        # 2. Extract MIDI notes frame by frame
+        while True:
+            samples, read = src()
+            pitch_midi = pitch_o(samples)[0]
+            confidence = pitch_o.get_confidence()
             
-        generated_files = os.listdir(output_midi_dir)
-        midi_files = [f for f in generated_files if f.endswith('.mid')]
+            # Filter out background silence and unconfident voice glitches
+            if pitch_midi > 0 and confidence > 0.85:
+                rounded_note = int(round(pitch_midi))
+                # Simple de-duplication: avoid stacking the exact same frame pitch
+                if not detected_pitches or detected_pitches[-1] != rounded_note:
+                    detected_pitches.append(rounded_note)
+                    
+            if read < hop_s:
+                break
+                
+        if not detected_pitches:
+            raise HTTPException(status_code=400, detail="Audio track too quiet or no clear melodic pitches detected.")
+            
+        # 3. Create a lightweight Music21 stream to analyze key center
+        music_stream = stream.Stream()
+        for p in detected_pitches:
+            n = note.Note()
+            n.pitch.midi = p
+            music_stream.append(n)
+            
+        detected_key = music_stream.analyze('key')
         
-        if not midi_files:
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Transcription completed but no MIDI files found. Contents: {generated_files}"
-            )
-        
-        # Access the first string element out of the list safely
-        midi_path = os.path.join(output_midi_dir, midi_files[0])
-        
-        # 6. Parse absolute pitches using musicology frameworks
-        score = converter.parse(midi_path)
-        detected_key = score.analyze('key')
-        
-        # 7. Flatten note layers and translate to relative scale degrees
+        # 4. Map pitches to relative Sol-fa syllables
         solfa_sequence = []
-        for note in score.flat.notes:
-            # If the output contains chords, pick the highest root pitch
-            pitch_to_analyze = note.pitches[-1] if hasattr(note, 'pitches') else note.pitch
+        for p in detected_pitches:
+            pitch_obj = pitch.Pitch()
+            pitch_obj.midi = p
             
-            degree_output = detected_key.getScaleDegreeAndAccidental(pitch_to_analyze)
-            
-            # Extract numerical scale degree if music21 returns tuple or object layout
-            if isinstance(degree_output, tuple) and len(degree_output) > 0:
-                degree = degree_output[0]
-            else:
-                degree = degree_output
-            
-            # Match degree integers directly to Sol-fa text syllables
+            degree = detected_key.getScaleDegreeAndAccidental(pitch_obj)
+            if isinstance(degree, tuple) and len(degree) > 0:
+                degree = degree[0]
+                
             if isinstance(degree, int) and degree in SOLFA_MAP:
-                solfa_sequence.append(SOLFA_MAP[degree])
+                # Basic cleanup: remove consecutive identical notes for cleaner display
+                if not solfa_sequence or solfa_sequence[-1] != SOLFA_MAP[degree]:
+                    solfa_sequence.append(SOLFA_MAP[degree])
 
-        # 8. Compile payload response
         return {
             "success": True,
             "detected_key": f"{detected_key.tonic.name} {detected_key.mode}",
@@ -122,9 +111,8 @@ async def transcribe_audio(file: UploadFile = File(...)):
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal Transcription Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Transcription error: {str(e)}")
         
     finally:
-        # 9. Clean up temporary operational file paths from server
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
