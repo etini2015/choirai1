@@ -4,6 +4,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import basic_pitch.inference as bp
 from music21 import converter
+from basic_pitch.inference import predict_and_save
 
 app = FastAPI(
     title="Sol-fa Transcription API",
@@ -58,7 +59,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
             shutil.copyfileobj(file.file, buffer)
             
         # 4. Transcribe audio straight to absolute MIDI
-        bp.predict_and_save_its_midi(
+        bp.predict_and_save(
             audio_path_list=[input_audio_path],
             output_directory=output_midi_dir,
             save_midi=True,
