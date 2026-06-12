@@ -1,10 +1,12 @@
 import os
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"  # Reduce logging noise
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"   # Mute standard TensorFlow CPU warnings
+
 import shutil
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import basic_pitch.inference as bp
-from music21 import converter
 from basic_pitch.inference import predict_and_save
+from music21 import converter
 
 app = FastAPI(
     title="Sol-fa Transcription API",
@@ -14,7 +16,7 @@ app = FastAPI(
 # Enable CORS so your Lovable.dev web application can securely fetch data
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://solfaai.lovable.app/"],  # Replace with your Lovable domain URL in production
+    allow_origins=["*"],  # Replace with your Lovable domain URL in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,7 +41,7 @@ def health_check():
 async def transcribe_audio(file: UploadFile = File(...)):
     # 1. Validate file extensions
     allowed_extensions = [".wav", ".mp3", ".ogg", ".flac", ".m4a"]
-    file_ext = os.path.splitext(file.filename)[1].lower()
+    file_ext = os.path.splitext(file.filename).lower()
     if file_ext not in allowed_extensions:
         raise HTTPException(
             status_code=400, 
@@ -52,14 +54,15 @@ async def transcribe_audio(file: UploadFile = File(...)):
     
     input_audio_path = os.path.join(temp_dir, f"upload_{file.filename}")
     output_midi_dir = os.path.join(temp_dir, "midi_out")
+    os.makedirs(output_midi_dir, exist_ok=True)
     
     try:
         # 3. Save incoming stream to local storage
         with open(input_audio_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
-        # 4. Transcribe audio straight to absolute MIDI
-        bp.predict_and_save(
+        # 4. Transcribe audio straight to absolute MIDI using correct function name
+        predict_and_save(
             audio_path_list=[input_audio_path],
             output_directory=output_midi_dir,
             save_midi=True,
@@ -68,13 +71,21 @@ async def transcribe_audio(file: UploadFile = File(...)):
             save_notes=False
         )
         
-        # 5. Locate the generated MIDI file
+        # 5. SAFE LOOKUP: Locate the generated MIDI file
+        if not os.path.exists(output_midi_dir):
+            raise HTTPException(status_code=500, detail="Midi output directory was not created.")
+            
         generated_files = os.listdir(output_midi_dir)
-        if not generated_files:
-            raise HTTPException(status_code=500, detail="Audio processing engine failed to capture structural notes.")
+        midi_files = [f for f in generated_files if f.endswith('.mid')]
         
-        midi_file_name = [f for f in generated_files if f.endswith('.mid')][0]
-        midi_path = os.path.join(output_midi_dir, midi_file_name)
+        if not midi_files:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Transcription completed but no MIDI files found. Contents: {generated_files}"
+            )
+        
+        # Safely target the first file string directly out of the list
+        midi_path = os.path.join(output_midi_dir, midi_files[0])
         
         # 6. Parse absolute pitches using musicology frameworks
         score = converter.parse(midi_path)
@@ -88,8 +99,8 @@ async def transcribe_audio(file: UploadFile = File(...)):
             
             degree = detected_key.getScaleDegreeAndAccidental(pitch_to_analyze)
             
-            # Match degree integers to text syllables
-            if isinstance(degree, tuple) and degree[0] in SOLFA_MAP:
+            # Match degree integers or objects to text syllables
+            if isinstance(degree, tuple) and len(degree) > 0 and degree[0] in SOLFA_MAP:
                 solfa_sequence.append(SOLFA_MAP[degree[0]])
             elif isinstance(degree, int) and degree in SOLFA_MAP:
                 solfa_sequence.append(SOLFA_MAP[degree])
@@ -103,7 +114,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Transcription error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal Transcription Error: {str(e)}")
         
     finally:
         # 9. Clean up temporary operational file paths from server
