@@ -30,7 +30,10 @@ def health_check():
 async def transcribe_audio(file: UploadFile = File(...)):
     filename_str = str(file.filename)
     allowed_extensions = [".wav", ".mp3", ".ogg", ".flac", ".m4a"]
-    file_ext = os.path.splitext(filename_str).lower()
+    
+    # --- FIXED CRASH POINT: Access index [1] of the splitext tuple ---
+    file_ext = os.path.splitext(filename_str)[1].lower()
+    # ─────────────────────────────────────────────────────────────────
     
     if file_ext not in allowed_extensions:
         raise HTTPException(
