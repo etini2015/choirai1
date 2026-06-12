@@ -13,7 +13,7 @@ app = FastAPI(
 # Enable CORS so your Lovable.dev web application can securely fetch data
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Replace with your Lovable domain URL in production
+    allow_origins=["https://solfaai.lovable.app/"],  # Replace with your Lovable domain URL in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
