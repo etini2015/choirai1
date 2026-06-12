@@ -39,9 +39,11 @@ def health_check():
 
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
-    # 1. Validate file extensions
+    # 1. FIXED: Convert filename safely to string to prevent tuple exceptions
+    filename_str = str(file.filename)
     allowed_extensions = [".wav", ".mp3", ".ogg", ".flac", ".m4a"]
-    file_ext = os.path.splitext(file.filename).lower()
+    file_ext = os.path.splitext(filename_str)[1].lower()
+    
     if file_ext not in allowed_extensions:
         raise HTTPException(
             status_code=400, 
@@ -52,7 +54,9 @@ async def transcribe_audio(file: UploadFile = File(...)):
     temp_dir = "./temp_processing"
     os.makedirs(temp_dir, exist_ok=True)
     
-    input_audio_path = os.path.join(temp_dir, f"upload_{file.filename}")
+    # Safe storage name construction
+    safe_filename = filename_str.replace("(", "").replace(")", "").replace(" ", "_")
+    input_audio_path = os.path.join(temp_dir, f"upload_{safe_filename}")
     output_midi_dir = os.path.join(temp_dir, "midi_out")
     os.makedirs(output_midi_dir, exist_ok=True)
     
@@ -84,7 +88,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
                 detail=f"Transcription completed but no MIDI files found. Contents: {generated_files}"
             )
         
-        # Safely target the first file string directly out of the list
+        # Access the first string element out of the list safely
         midi_path = os.path.join(output_midi_dir, midi_files[0])
         
         # 6. Parse absolute pitches using musicology frameworks
@@ -97,12 +101,16 @@ async def transcribe_audio(file: UploadFile = File(...)):
             # If the output contains chords, pick the highest root pitch
             pitch_to_analyze = note.pitches[-1] if hasattr(note, 'pitches') else note.pitch
             
-            degree = detected_key.getScaleDegreeAndAccidental(pitch_to_analyze)
+            degree_output = detected_key.getScaleDegreeAndAccidental(pitch_to_analyze)
             
-            # Match degree integers or objects to text syllables
-            if isinstance(degree, tuple) and len(degree) > 0 and degree[0] in SOLFA_MAP:
-                solfa_sequence.append(SOLFA_MAP[degree[0]])
-            elif isinstance(degree, int) and degree in SOLFA_MAP:
+            # Extract numerical scale degree if music21 returns tuple or object layout
+            if isinstance(degree_output, tuple) and len(degree_output) > 0:
+                degree = degree_output[0]
+            else:
+                degree = degree_output
+            
+            # Match degree integers directly to Sol-fa text syllables
+            if isinstance(degree, int) and degree in SOLFA_MAP:
                 solfa_sequence.append(SOLFA_MAP[degree])
 
         # 8. Compile payload response
