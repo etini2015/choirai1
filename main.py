@@ -3,12 +3,13 @@ import shutil
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import aubio
+import librosa
+import scipy
 from music21 import pitch, key, stream, note
 
 app = FastAPI(
-    title="Lightweight Sol-fa Transcription API",
-    description="TensorFlow-free monophonic audio transcription engine optimized for low-RAM servers"
+    title="Data-Science Sol-fa Transcription API",
+    description="Lightweight, pre-compiled music analysis pipeline"
 )
 
 app.add_middleware(
@@ -23,7 +24,7 @@ SOLFA_MAP = {1: "do", 2: "re", 3: "mi", 4: "fa", 5: "sol", 6: "la", 7: "ti"}
 
 @app.get("/")
 def health_check():
-    return {"status": "healthy", "service": "Lightweight Sol-fa Engine"}
+    return {"status": "healthy", "service": "Librosa Sol-fa Engine"}
 
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
@@ -45,41 +46,33 @@ async def transcribe_audio(file: UploadFile = File(...)):
         with open(input_audio_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
-        # 1. Initialize Aubio's lightweight pitch tracker
-        samplerate = 44100
-        win_s = 4096   # window size
-        hop_s = 512    # hop size
+        # 1. Load audio matrix into memory safely (downsampled to 22050Hz for speed)
+        y, sr = librosa.load(input_audio_path, sr=22050, mono=True)
         
-        src = aubio.source(input_audio_path, samplerate, hop_s)
-        samplerate = src.samplerate
-        
-        # Uses YinFFT algorithm - highly accurate for monophonic singing/vocal tracks
-        pitch_o = aubio.pitch("yinfft", win_s, hop_s, samplerate)
-        pitch_o.set_unit("midi")
-        pitch_o.set_tolerance(0.8)
+        # 2. Extract fundamental frequency (f0) frames using the YIN algorithm
+        f0, voiced_flag, voiced_probs = librosa.pyin(
+            y, 
+            fmin=librosa.note_to_hz('C2'), 
+            fmax=librosa.note_to_hz('C7'),
+            sr=sr
+        )
         
         detected_pitches = []
         
-        # 2. Extract MIDI notes frame by frame
-        while True:
-            samples, read = src()
-            pitch_midi = pitch_o(samples)[0]
-            confidence = pitch_o.get_confidence()
-            
-            # Filter out background silence and unconfident voice glitches
-            if pitch_midi > 0 and confidence > 0.85:
-                rounded_note = int(round(pitch_midi))
-                # Simple de-duplication: avoid stacking the exact same frame pitch
-                if not detected_pitches or detected_pitches[-1] != rounded_note:
-                    detected_pitches.append(rounded_note)
-                    
-            if read < hop_s:
-                break
+        # Filter out NaN frames (silence/unvoiced data)
+        for freq in f0:
+            if not np.isnan(freq) and freq > 0:
+                # Convert Hertz frequencies straight to absolute MIDI note integers
+                midi_note = int(round(librosa.hz_to_midi(freq)))
                 
+                # Deduplicate consecutive identical frames for clean arrays
+                if not detected_pitches or detected_pitches[-1] != midi_note:
+                    detected_pitches.append(midi_note)
+                    
         if not detected_pitches:
-            raise HTTPException(status_code=400, detail="Audio track too quiet or no clear melodic pitches detected.")
+            raise HTTPException(status_code=400, detail="No clear melodic singing or pitches detected.")
             
-        # 3. Create a lightweight Music21 stream to analyze key center
+        # 3. Stream notes into Music21 to automatically detect the key
         music_stream = stream.Stream()
         for p in detected_pitches:
             n = note.Note()
@@ -88,7 +81,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
             
         detected_key = music_stream.analyze('key')
         
-        # 4. Map pitches to relative Sol-fa syllables
+        # 4. Map absolute MIDI notes to relative Sol-fa syllables
         solfa_sequence = []
         for p in detected_pitches:
             pitch_obj = pitch.Pitch()
@@ -96,10 +89,9 @@ async def transcribe_audio(file: UploadFile = File(...)):
             
             degree = detected_key.getScaleDegreeAndAccidental(pitch_obj)
             if isinstance(degree, tuple) and len(degree) > 0:
-                degree = degree[0]
+                degree = degree
                 
             if isinstance(degree, int) and degree in SOLFA_MAP:
-                # Basic cleanup: remove consecutive identical notes for cleaner display
                 if not solfa_sequence or solfa_sequence[-1] != SOLFA_MAP[degree]:
                     solfa_sequence.append(SOLFA_MAP[degree])
 
@@ -111,7 +103,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Transcription error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Transcription pipeline error: {str(e)}")
         
     finally:
         if os.path.exists(temp_dir):
