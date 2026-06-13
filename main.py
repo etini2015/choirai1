@@ -1,13 +1,14 @@
 import os
 import io
 import shutil
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from typing import Optional
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from basic_pitch.inference import predict
 from basic_pitch import ICASSP_2022_MODEL_PATH
-from music21 import converter
+from music21 import converter, key
 
-app = FastAPI(title="Optimized Sol-fa Transcription Engine")
+app = FastAPI(title="Optimized Sol-fa Transcription Engine with Key Override")
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,7 +25,10 @@ def health_check():
     return {"status": "healthy", "service": "Fixed Sol-fa Core"}
 
 @app.post("/transcribe")
-async def transcribe_audio(file: UploadFile = File(...)):
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    manual_key: Optional[str] = Query(None, description="Optional override key like 'C', 'G', 'F#m', 'Am'")
+):
     filename = str(file.filename)
     
     if not any(filename.lower().endswith(ext) for ext in [".wav", ".mp3", ".m4a", ".ogg"]):
@@ -49,7 +53,16 @@ async def transcribe_audio(file: UploadFile = File(...)):
         midi_stream.seek(0)
         
         score = converter.parse(midi_stream.read())
-        detected_key = score.analyze('key')
+        
+        # Determine the musical key (use override if provided, otherwise auto-detect)
+        if manual_key:
+            try:
+                # Expect formats like "C", "G", "Am", "F#"
+                detected_key = key.Key(manual_key)
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"Invalid manual key format: {manual_key}")
+        else:
+            detected_key = score.analyze('key')
         
         # Get the scale representation safely
         target_scale = detected_key.getScale()
@@ -57,13 +70,11 @@ async def transcribe_audio(file: UploadFile = File(...)):
         solfa_sequence = []
         for note_obj in score.flat.notes:
             if hasattr(note_obj, 'pitch'):
-                # --- FIXED: Use getScaleDegreeFromPitch for Scale objects ---
                 degree = target_scale.getScaleDegreeFromPitch(note_obj.pitch)
                 if degree in SOLFA_MAP:
                     solfa_sequence.append(SOLFA_MAP[degree])
             elif hasattr(note_obj, 'pitches'):
                 for p in note_obj.pitches:
-                    # --- FIXED: Use getScaleDegreeFromPitch for Scale objects ---
                     degree = target_scale.getScaleDegreeFromPitch(p)
                     if degree in SOLFA_MAP:
                         solfa_sequence.append(SOLFA_MAP[degree])
