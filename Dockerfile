@@ -1,8 +1,9 @@
 FROM python:3.10-slim
 
-# Install FFmpeg system-wide so basic-pitch can decode MP3 files natively
+# Install system utilities and ffmpeg for audio slicing
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
