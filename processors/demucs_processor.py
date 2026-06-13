@@ -11,16 +11,16 @@ def separate_vocals(audio_path):
         "python",
         "-m",
         "demucs",
-        "--two-stems=vocals",
+
+        # model (keep light for Railway)
         "-n",
         "htdemucs_light",
 
-        # 🔥 IMPORTANT FIX: avoids torchcodec crash
-        "--audio-backend=soundfile",
-
+        # output folder
         "-o",
         output_dir,
 
+        # input file MUST be last
         audio_path
     ]
 
@@ -30,25 +30,19 @@ def separate_vocals(audio_path):
         text=True
     )
 
-    # ---- DEBUG LOGS (VERY IMPORTANT) ----
     print("=== DEMUCS STDOUT ===")
     print(result.stdout)
 
     print("=== DEMUCS STDERR ===")
     print(result.stderr)
 
-    # ---- FAIL FAST IF ERROR ----
     if result.returncode != 0:
-        raise Exception(
-            f"Demucs failed:\n{result.stderr}"
-        )
+        raise Exception(f"Demucs failed:\n{result.stderr}")
 
-    # ---- GET SONG NAME ----
     song_name = os.path.splitext(
         os.path.basename(audio_path)
     )[0]
 
-    # ---- PATH TO VOCALS ----
     vocals_path = os.path.join(
         output_dir,
         "htdemucs_light",
@@ -58,7 +52,7 @@ def separate_vocals(audio_path):
 
     if not os.path.exists(vocals_path):
         raise FileNotFoundError(
-            f"Vocals file not found at: {vocals_path}"
+            f"Vocals file not found: {vocals_path}"
         )
 
     return vocals_path
