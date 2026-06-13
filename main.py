@@ -57,14 +57,14 @@ async def transcribe_audio(file: UploadFile = File(...)):
         solfa_sequence = []
         for note_obj in score.flat.notes:
             if hasattr(note_obj, 'pitch'):
-                # --- FIXED: Use getScaleDegree for Scale objects ---
-                degree = target_scale.getScaleDegree(note_obj.pitch)
+                # --- FIXED: Use getScaleDegreeFromPitch for Scale objects ---
+                degree = target_scale.getScaleDegreeFromPitch(note_obj.pitch)
                 if degree in SOLFA_MAP:
                     solfa_sequence.append(SOLFA_MAP[degree])
             elif hasattr(note_obj, 'pitches'):
                 for p in note_obj.pitches:
-                    # --- FIXED: Use getScaleDegree for Scale objects ---
-                    degree = target_scale.getScaleDegree(p)
+                    # --- FIXED: Use getScaleDegreeFromPitch for Scale objects ---
+                    degree = target_scale.getScaleDegreeFromPitch(p)
                     if degree in SOLFA_MAP:
                         solfa_sequence.append(SOLFA_MAP[degree])
                         break
