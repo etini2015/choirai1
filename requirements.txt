@@ -1,8 +1,19 @@
-fastapi==0.111.0
-uvicorn==0.30.1
-python-multipart==0.0.9
-demucs==4.0.1
-torch==2.2.1 --index-url https://pytorch.org
-basic-pitch==0.2.4
-scipy==1.12.0
-music21==9.1.0
+fastapi
+uvicorn[standard]
+
+numpy
+scipy
+librosa
+soundfile
+
+music21
+pretty_midi
+
+basic-pitch
+
+demucs
+
+torch
+torchaudio
+
+python-multipart
