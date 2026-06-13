@@ -57,7 +57,6 @@ async def transcribe_audio(
         # Determine the musical key (use override if provided, otherwise auto-detect)
         if manual_key:
             try:
-                # Expect formats like "C", "G", "Am", "F#"
                 detected_key = key.Key(manual_key)
             except Exception:
                 raise HTTPException(status_code=400, detail=f"Invalid manual key format: {manual_key}")
@@ -67,28 +66,37 @@ async def transcribe_audio(
         # Get the scale representation safely
         target_scale = detected_key.getScale()
         
-        solfa_sequence = []
+        raw_solfa_sequence = []
+        
+        # --- NEW OPTIMIZATION FILTERING ---
+        # Iterate through notes and filter out ultra-short ghost notes or low velocity hums
         for note_obj in score.flat.notes:
+            # Skip noise artifacts (notes shorter than 0.15 seconds)
+            if note_obj.duration.quarterLength < 0.15:
+                continue
+                
             if hasattr(note_obj, 'pitch'):
                 degree = target_scale.getScaleDegreeFromPitch(note_obj.pitch)
                 if degree in SOLFA_MAP:
-                    solfa_sequence.append(SOLFA_MAP[degree])
+                    raw_solfa_sequence.append(SOLFA_MAP[degree])
             elif hasattr(note_obj, 'pitches'):
                 for p in note_obj.pitches:
                     degree = target_scale.getScaleDegreeFromPitch(p)
                     if degree in SOLFA_MAP:
-                        solfa_sequence.append(SOLFA_MAP[degree])
+                        raw_solfa_sequence.append(SOLFA_MAP[degree])
                         break
                         
+        # COMPRESSION FILTER: Remove repeating adjacent notes so it looks like readable sheet music
         clean_solfa = []
-        for syllable in solfa_sequence:
+        for syllable in raw_solfa_sequence:
             if not clean_solfa or clean_solfa[-1] != syllable:
                 clean_solfa.append(syllable)
 
         return {
             "success": True,
             "detected_key": f"{detected_key.tonic.name} {detected_key.mode.capitalize()}",
-            "solfa": clean_solfa
+            "solfa": clean_solfa,
+            "note_count": len(clean_solfa)
         }
         
     except Exception as e:
