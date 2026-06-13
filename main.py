@@ -51,24 +51,20 @@ async def transcribe_audio(file: UploadFile = File(...)):
         score = converter.parse(midi_stream.read())
         detected_key = score.analyze('key')
         
-        # --- FIXED MUSIC21 OBJECT TRANSCRIPTION HOOK ---
-        # Use getScale() to extract the concrete scale representation safely
+        # Get the scale representation safely
         target_scale = detected_key.getScale()
-        # ───────────────────────────────────────────────
         
         solfa_sequence = []
         for note_obj in score.flat.notes:
             if hasattr(note_obj, 'pitch'):
-                degree = target_scale.getScaleDegreeAndAccidental(note_obj.pitch)
-                if isinstance(degree, tuple) and len(degree) > 0:
-                    degree = degree[0]
+                # --- FIXED: Use getScaleDegree for Scale objects ---
+                degree = target_scale.getScaleDegree(note_obj.pitch)
                 if degree in SOLFA_MAP:
                     solfa_sequence.append(SOLFA_MAP[degree])
             elif hasattr(note_obj, 'pitches'):
                 for p in note_obj.pitches:
-                    degree = target_scale.getScaleDegreeAndAccidental(p)
-                    if isinstance(degree, tuple) and len(degree) > 0:
-                        degree = degree[0]
+                    # --- FIXED: Use getScaleDegree for Scale objects ---
+                    degree = target_scale.getScaleDegree(p)
                     if degree in SOLFA_MAP:
                         solfa_sequence.append(SOLFA_MAP[degree])
                         break
