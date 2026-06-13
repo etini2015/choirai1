@@ -11,9 +11,9 @@ pretty_midi
 
 basic-pitch
 
-demucs
-
-torch
-torchaudio
+demucs==4.0.1
+torchaudio==2.2.1
+torch==2.2.1
+soundfile
 
 python-multipart
