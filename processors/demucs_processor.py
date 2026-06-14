@@ -8,21 +8,19 @@ def separate_vocals(audio_path):
     os.makedirs(output_dir, exist_ok=True)
 
     command = [
-        "python",
-        "-m",
-        "demucs",
+    "python",
+    "-m",
+    "demucs",
 
-        # model (keep light for Railway)
-        "-n",
-        "htdemucs_light",
+    # ✅ correct model
+    "-n",
+    "htdemucs",
 
-        # output folder
-        "-o",
-        output_dir,
+    "-o",
+    output_dir,
 
-        # input file MUST be last
-        audio_path
-    ]
+    audio_path
+]
 
     result = subprocess.run(
         command,
